@@ -4,9 +4,9 @@ import matplotlib.pyplot as plt
 # =====================
 # Parametry 5G-like OFDM
 # =====================
-N = 64              # FFT size (jak mały PRB grid)
-CP = 16             # cyclic prefix
-mod_bits = 6        # 64-QAM
+N = 64
+CP = 16
+mod_bits = 6  # 64-QAM
 
 # =====================
 # Wiadomość
@@ -40,27 +40,30 @@ def qam64_mod(bits):
 symbols = qam64_mod(bits_tx)
 
 # =====================
-# RESOURCE GRID (jak w 5G)
+# RESOURCE GRID
 # =====================
 grid = symbols.reshape((num_symbols, N))
-
-# (opcjonalnie: piloty jak DM-RS)
-grid[:, ::16] = 1+1j  # proste "pilots"
+grid[:, ::16] = 1+1j  # piloty
 
 # =====================
-# OFDM - CP-OFDM (5G)
+# OFDM (IFFT + CP)
 # =====================
-# normalizacja IFFT jak w standardach OFDM
 ofdm_time = np.fft.ifft(grid, axis=1) * np.sqrt(N)
 
-# CP insertion
 cp = ofdm_time[:, -CP:]
 tx_signal = np.hstack([cp, ofdm_time])
-
 tx_serial = tx_signal.flatten()
 
 # =====================
-# Widmo baseband vs RF
+# Nieliniowość PA
+# =====================
+def nonlinear_pa(x, alpha=1.0, beta=0.005):
+    return alpha * x - beta * (np.abs(x)**2) * x
+
+tx_nl = nonlinear_pa(tx_serial)
+
+# =====================
+# Widmo
 # =====================
 fs = 1000
 fc = 200
@@ -77,17 +80,19 @@ def spectrum(x):
 
 f_bb, S_bb = spectrum(bb)
 f_rf, S_rf = spectrum(rf)
+f_nl, S_nl = spectrum(tx_nl[:len(bb)])
 
 plt.figure(figsize=(10,5))
-plt.plot(f_bb, S_bb, label="Baseband (5G CP-OFDM)")
-plt.plot(f_rf, S_rf, label="RF shifted")
+plt.plot(f_bb, S_bb, label="Baseband")
+plt.plot(f_rf, S_rf, label="RF")
+plt.plot(f_nl, S_nl, label="Po nieliniowości")
 plt.grid()
 plt.legend()
-plt.title("Baseband → RF (5G idea)")
+plt.title("Widmo sygnału")
 plt.show()
 
 # =====================
-# AWGN channel
+# Kanał AWGN
 # =====================
 def awgn(x, snr_db):
     p = np.mean(np.abs(x)**2)
@@ -96,7 +101,7 @@ def awgn(x, snr_db):
     noise = np.sqrt(npow/2)*(np.random.randn(*x.shape)+1j*np.random.randn(*x.shape))
     return x + noise
 
-rx = awgn(tx_serial, 30)
+rx = awgn(tx_nl, 20)
 
 # =====================
 # Receiver
@@ -105,12 +110,37 @@ rx_mat = rx.reshape(tx_signal.shape)
 rx_no_cp = rx_mat[:, CP:]
 rx_fft = np.fft.fft(rx_no_cp, axis=1) / np.sqrt(N)
 
-# usunięcie pilotów
-rx_fft[:, ::16] = 0
+rx_fft[:, ::16] = 0  # usuń piloty
 
-plt.scatter(rx_fft.real, rx_fft.imag, alpha=0.5)
-plt.title("Konstelacja po kanale (5G-like)")
+# =====================
+# Konstelacje
+# =====================
+
+# TX idealny
+tx_fft = np.fft.fft(ofdm_time, axis=1) / np.sqrt(N)
+
+# po nieliniowości (bez szumu)
+tx_nl_mat = tx_nl.reshape(tx_signal.shape)
+tx_nl_no_cp = tx_nl_mat[:, CP:]
+tx_nl_fft = np.fft.fft(tx_nl_no_cp, axis=1) / np.sqrt(N)
+
+plt.figure(figsize=(15,4))
+
+plt.subplot(1,3,1)
+plt.scatter(tx_fft.real, tx_fft.imag, alpha=0.4)
+plt.title("Ideal TX")
 plt.grid()
+
+plt.subplot(1,3,2)
+plt.scatter(tx_nl_fft.real, tx_nl_fft.imag, alpha=0.4)
+plt.title("Po nieliniowości (PA)")
+plt.grid()
+
+plt.subplot(1,3,3)
+plt.scatter(rx_fft.real, rx_fft.imag, alpha=0.4)
+plt.title("Po kanale (AWGN + PA)")
+plt.grid()
+
 plt.show()
 
 # =====================
