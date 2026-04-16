@@ -63,32 +63,73 @@ def nonlinear_pa(x, alpha=1.0, beta=0.005):
 tx_nl = nonlinear_pa(tx_serial)
 
 # =====================
-# Widmo
+# Parametry RF
 # =====================
-fs = 1000
-fc = 200
+subcarrier_spacing = 15e3
+fs = N * subcarrier_spacing   # 960 kHz
+fc = 2.6e9
 
+# =====================
+# BASEBAND
+# =====================
 bb = tx_signal[0]
+
+# =====================
+# RF modulacja I/Q
+# =====================
 t = np.arange(len(bb)) / fs
 
 rf = np.real(bb)*np.cos(2*np.pi*fc*t) - np.imag(bb)*np.sin(2*np.pi*fc*t)
 
+# =====================
+# Spectrum (dB)
+# =====================
 def spectrum(x):
     S = np.fft.fftshift(np.fft.fft(x))
     f = np.fft.fftshift(np.fft.fftfreq(len(x), d=1/fs))
-    return f, np.abs(S)
+    S = 20*np.log10(np.abs(S) + 1e-12)
+    return f, S
 
+# =====================
+# Widma
+# =====================
 f_bb, S_bb = spectrum(bb)
 f_rf, S_rf = spectrum(rf)
 f_nl, S_nl = spectrum(tx_nl[:len(bb)])
 
-plt.figure(figsize=(10,5))
-plt.plot(f_bb, S_bb, label="Baseband")
-plt.plot(f_rf, S_rf, label="RF")
-plt.plot(f_nl, S_nl, label="Po nieliniowości")
+# =====================
+# 🔵 BASEBAND
+# =====================
+plt.figure(figsize=(10,4))
+plt.plot(f_bb, S_bb)
+plt.title("Baseband OFDM (0 Hz)")
+plt.xlabel("Frequency [Hz]")
+plt.ylabel("Magnitude [dB]")
 plt.grid()
-plt.legend()
-plt.title("Widmo sygnału")
+plt.show()
+
+# =====================
+# 🔴 RF (5G BAND SHIFT)
+# =====================
+f_rf_shifted = f_rf + fc   # KLUCZ
+
+plt.figure(figsize=(10,4))
+plt.plot(f_rf_shifted, S_rf)
+plt.title("RF po modulacji I/Q (pasmo 5G ~ 2.6 GHz)")
+plt.xlabel("Frequency [Hz]")
+plt.ylabel("Magnitude [dB]")
+plt.grid()
+plt.show()
+
+# =====================
+# 🟣 PO NIELINIOWOŚCI PA
+# =====================
+plt.figure(figsize=(10,4))
+plt.plot(f_nl, S_nl)
+plt.title("Widmo po nieliniowości PA")
+plt.xlabel("Frequency [Hz]")
+plt.ylabel("Magnitude [dB]")
+plt.grid()
 plt.show()
 
 # =====================
@@ -101,7 +142,7 @@ def awgn(x, snr_db):
     noise = np.sqrt(npow/2)*(np.random.randn(*x.shape)+1j*np.random.randn(*x.shape))
     return x + noise
 
-rx = awgn(tx_nl, 20)
+rx = awgn(tx_nl, 30)
 
 # =====================
 # Receiver
@@ -115,11 +156,8 @@ rx_fft[:, ::16] = 0  # usuń piloty
 # =====================
 # Konstelacje
 # =====================
-
-# TX idealny
 tx_fft = np.fft.fft(ofdm_time, axis=1) / np.sqrt(N)
 
-# po nieliniowości (bez szumu)
 tx_nl_mat = tx_nl.reshape(tx_signal.shape)
 tx_nl_no_cp = tx_nl_mat[:, CP:]
 tx_nl_fft = np.fft.fft(tx_nl_no_cp, axis=1) / np.sqrt(N)
