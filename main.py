@@ -2,16 +2,20 @@ import numpy as np
 import matplotlib.pyplot as plt
 
 # =====================
-# Parametry 5G-like OFDM
+# Parametry OFDM
 # =====================
-N = 64
-CP = 16
-mod_bits = 6  # 64-QAM
+N = 64              # liczba podnośnych
+CP = 16             # cyclic prefix
+mod_bits = 6        # 64-QAM
+
+fs = 1000           # sampling
+fc = 200            # nośna RF
 
 # =====================
 # Wiadomość
 # =====================
-text = "Hello 5G OFDM baseband!"
+text = "Cz ęść I Obrachunek S ł owo wst ę pne Adolfa Hitlera 9 pa ź dziernika I921 roku, w cztery lata od jej powstania, Narodowosocjalistyczna Niemiecka Partia Robotnicza zosta ł a rozwi ą zana, a jej dzia ł alno ść zakazana w ca ł ej Rzeszy. I kwietnia I924 roku wyrokiem S ą du Ludowego w Monachium zosta ł em skazany i osadzony w twierdzy Landsberg nad Lechem. To da ł o mi po latach nieprzerwanej pracy mo ż liwo ść przyst ą pienia do dzie ł a, którego wielu si ę domaga ł o, a które ja uwa ż a ł em za po ż yteczne dla ruchu. Tak wi ę c postanowi ł em wyja ś ni ć w tej ksi ąż ce cele naszego ruchu, a tak ż e przedstawi ć obraz jego rozwoju. Z niej b ę dzie si ę mo ż na wi ę cej nauczy ć ni ż z jakiejkolwiek czysto doktrynerskiej rozprawy naukowej. Da ł o mi to sposobno ść przedstawienia swojej osobowo ś ci na tyle, na ile jest to potrzebne do zrozumienia idei tej ksi ąż ki i rozwiania sfabrykowanej przez ż ydowsk ą pras ę legendy mojej osoby. T ą prac ą zwracam si ę nie do obcych, ale do tych stronników ruchu, którzy nale żą do niego sercem i pragn ą jego zrozumienia. Wiem, ż e ludzi ł atwiej mo ż na pozyska ć s ł owem mówionym ni ż pisanym i ż e ka ż dy wielki ruch na tej ziemi ro ś nie w si łę dzi ę ki mówcom, a nie wielkim pisarzom. Jednak ż e w celu stworzenia podstaw jakiej ś doktryny i jej ujednolicenia wewn ę trzne zasady musz ą zosta ć spisane. Mo ż e wi ę c ta ksi ąż ka stanie si ę kamieniem w ę gielnym naszego ruchu, do którego i ja wnios ę swój wk ł ad. Au"
+#bits_tx = np.random.randint(0, 2, 10000)
 bits_tx = np.unpackbits(np.frombuffer(text.encode('utf-8'), dtype=np.uint8))
 
 num_bits = len(bits_tx)
@@ -40,100 +44,67 @@ def qam64_mod(bits):
 symbols = qam64_mod(bits_tx)
 
 # =====================
-# RESOURCE GRID
+# GRID (OFDM resource grid)
 # =====================
 grid = symbols.reshape((num_symbols, N))
-grid[:, ::16] = 1+1j  # piloty
 
+# piloty (opcjonalnie)
+#grid[:, ::16] = 1+1j
+
+
+grid[0, :] = 1
 # =====================
-# OFDM (IFFT + CP)
+# OFDM modulacja
 # =====================
 ofdm_time = np.fft.ifft(grid, axis=1) * np.sqrt(N)
 
 cp = ofdm_time[:, -CP:]
 tx_signal = np.hstack([cp, ofdm_time])
+
+# sygnał szeregowy (WAŻNE!)
 tx_serial = tx_signal.flatten()
 
 # =====================
-# Nieliniowość PA
+# Upconversion (baseband → RF)
 # =====================
-def nonlinear_pa(x, alpha=1.0, beta=0.005):
-    return alpha * x - beta * (np.abs(x)**2) * x
+t = np.arange(len(tx_serial)) / fs
 
-tx_nl = nonlinear_pa(tx_serial)
-
-# =====================
-# Parametry RF
-# =====================
-subcarrier_spacing = 15e3
-fs = N * subcarrier_spacing   # 960 kHz
-fc = 2.6e9
+rf = (np.real(tx_serial) * np.cos(2*np.pi*fc*t)
+     -np.imag(tx_serial) * np.sin(2*np.pi*fc*t))
 
 # =====================
-# BASEBAND
-# =====================
-bb = tx_signal[0]
-
-# =====================
-# RF modulacja I/Q
-# =====================
-t = np.arange(len(bb)) / fs
-
-rf = np.real(bb)*np.cos(2*np.pi*fc*t) - np.imag(bb)*np.sin(2*np.pi*fc*t)
-
-# =====================
-# Spectrum (dB)
+# Widmo (duże FFT!)
 # =====================
 def spectrum(x):
-    S = np.fft.fftshift(np.fft.fft(x))
-    f = np.fft.fftshift(np.fft.fftfreq(len(x), d=1/fs))
-    S = 20*np.log10(np.abs(S) + 1e-12)
-    return f, S
+    Nfft = 4096
+    S = np.fft.fftshift(np.fft.fft(x, Nfft))
+    f = np.fft.fftshift(np.fft.fftfreq(Nfft, d=1/fs))
+    return f, np.abs(S)
 
-# =====================
-# Widma
-# =====================
-f_bb, S_bb = spectrum(bb)
+f_bb, S_bb = spectrum(tx_serial)
 f_rf, S_rf = spectrum(rf)
-f_nl, S_nl = spectrum(tx_nl[:len(bb)])
 
-# =====================
-# 🔵 BASEBAND
-# =====================
-plt.figure(figsize=(10,4))
-plt.plot(f_bb, S_bb)
-plt.title("Baseband OFDM (0 Hz)")
-plt.xlabel("Frequency [Hz]")
-plt.ylabel("Magnitude [dB]")
+plt.figure(figsize=(10,5))
+plt.plot(f_bb, S_bb, label="Baseband OFDM")
+plt.plot(f_rf, S_rf, label="RF shifted")
+plt.legend()
 plt.grid()
+plt.title("OFDM Spectrum (wiele podnośnych widoczne)")
 plt.show()
 
 # =====================
-# 🔴 RF (5G BAND SHIFT)
+# SPECTROGRAM (🔥 najlepsze!)
 # =====================
-f_rf_shifted = f_rf + fc   # KLUCZ
-
-plt.figure(figsize=(10,4))
-plt.plot(f_rf_shifted, S_rf)
-plt.title("RF po modulacji I/Q (pasmo 5G ~ 2.6 GHz)")
-plt.xlabel("Frequency [Hz]")
-plt.ylabel("Magnitude [dB]")
-plt.grid()
+plt.figure(figsize=(10,5))
+plt.specgram(tx_serial, NFFT=128, Fs=fs, noverlap=64)
+plt.title("Spectrogram OFDM (widać podnośne)")
+plt.xlabel("Czas")
+plt.ylabel("Częstotliwość")
+plt.colorbar()
 plt.show()
 
 # =====================
-# 🟣 PO NIELINIOWOŚCI PA
-# =====================
-plt.figure(figsize=(10,4))
-plt.plot(f_nl, S_nl)
-plt.title("Widmo po nieliniowości PA")
-plt.xlabel("Frequency [Hz]")
-plt.ylabel("Magnitude [dB]")
-plt.grid()
-plt.show()
-
-# =====================
-# Kanał AWGN
+# AWGN
 # =====================
 def awgn(x, snr_db):
     p = np.mean(np.abs(x)**2)
@@ -142,43 +113,30 @@ def awgn(x, snr_db):
     noise = np.sqrt(npow/2)*(np.random.randn(*x.shape)+1j*np.random.randn(*x.shape))
     return x + noise
 
-rx = awgn(tx_nl, 30)
+rx = awgn(tx_serial, 30)
 
 # =====================
 # Receiver
 # =====================
 rx_mat = rx.reshape(tx_signal.shape)
+
 rx_no_cp = rx_mat[:, CP:]
 rx_fft = np.fft.fft(rx_no_cp, axis=1) / np.sqrt(N)
 
-rx_fft[:, ::16] = 0  # usuń piloty
+# usuwamy piloty
+rx_fft[:, ::16] = 0
 
-# =====================
-# Konstelacje
-# =====================
-tx_fft = np.fft.fft(ofdm_time, axis=1) / np.sqrt(N)
+# konstelacja
+# konstelacja wielu podnośnych (kolory)
+for k in range(4):  # np. 8 pierwszych podnośnych
+    plt.scatter(rx_fft[:, k+1].real,
+                rx_fft[:, k+1].imag,
+                label=f"podnośna {k+1}",
+                alpha=0.6)
 
-tx_nl_mat = tx_nl.reshape(tx_signal.shape)
-tx_nl_no_cp = tx_nl_mat[:, CP:]
-tx_nl_fft = np.fft.fft(tx_nl_no_cp, axis=1) / np.sqrt(N)
-
-plt.figure(figsize=(15,4))
-
-plt.subplot(1,3,1)
-plt.scatter(tx_fft.real, tx_fft.imag, alpha=0.4)
-plt.title("Ideal TX")
+plt.legend()
 plt.grid()
-
-plt.subplot(1,3,2)
-plt.scatter(tx_nl_fft.real, tx_nl_fft.imag, alpha=0.4)
-plt.title("Po nieliniowości (PA)")
-plt.grid()
-
-plt.subplot(1,3,3)
-plt.scatter(rx_fft.real, rx_fft.imag, alpha=0.4)
-plt.title("Po kanale (AWGN + PA)")
-plt.grid()
-
+plt.title("Różne podnośne (kolorami)")
 plt.show()
 
 # =====================
@@ -204,7 +162,8 @@ ber = np.mean(bits_tx[:num_bits] != rx_bits)
 print("BER:", ber)
 
 # =====================
-# Text
+# Tekst
 # =====================
 rx_bytes = np.packbits(rx_bits)
 print("Odebrano:", rx_bytes.tobytes().decode('utf-8', errors='ignore'))
+print("liczba podśnych :", N)
