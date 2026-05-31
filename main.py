@@ -1,5 +1,6 @@
 import numpy as np
 import matplotlib.pyplot as plt
+from utils import gray_to_bin3
 
 # =====================
 # Parametry OFDM
@@ -20,7 +21,7 @@ bits_tx = np.unpackbits(np.frombuffer(text.encode('utf-8'), dtype=np.uint8))
 
 num_bits = len(bits_tx)
 pad_len = (N * mod_bits - (num_bits % (N * mod_bits))) % (N * mod_bits)
-bits_tx = np.hstack([bits_tx, np.zeros(pad_len, dtype=np.uint8)])
+bits_tx = np.hstack([bits_tx, np.zeros(pad_len, dtype=np.int8)])
 
 num_symbols = len(bits_tx) // (N * mod_bits)
 
@@ -30,14 +31,18 @@ num_symbols = len(bits_tx) // (N * mod_bits)
 def qam64_mod(bits):
     bits = bits.reshape((-1, 6))
 
-    def map3(b):
-        return (4*b[0] + 2*b[1] + b[2])
+    def map3(b, Q=False):
+        # I-axis: bits 0,2,4
+        # Q-axis: bits 1,3,5
+        if not Q:
+            b0, b2, b4 = b[0], b[2], b[4]
+        else:
+            b0, b2, b4 = b[1], b[3], b[5]
 
-    I = np.array([map3(b[:3]) for b in bits])
-    Q = np.array([map3(b[3:]) for b in bits])
+        return (1 - 2*b0) * (4 - (1 - 2*b2) * (2 - (1 - 2*b4)))
 
-    I = 2*I - 7
-    Q = 2*Q - 7
+    I = np.array([map3(b) for b in bits])
+    Q = np.array([map3(b, Q=True) for b in bits])
 
     return (I + 1j*Q) / np.sqrt(42)
 
@@ -113,7 +118,7 @@ def awgn(x, snr_db):
     noise = np.sqrt(npow/2)*(np.random.randn(*x.shape)+1j*np.random.randn(*x.shape))
     return x + noise
 
-rx = awgn(tx_serial, 30)
+rx = awgn(tx_serial, 0)
 
 # =====================
 # Receiver
@@ -142,17 +147,47 @@ plt.show()
 # =====================
 # Demod 64-QAM
 # =====================
-def qam64_demod(x):
-    x = x * np.sqrt(42)
-    I, Q = np.real(x), np.imag(x)
+def qam64_demod(symbols):
+    symbols = symbols * np.sqrt(42)
 
-    def demap(v):
-        v = np.clip(np.round((v + 7)/2), 0, 7).astype(int)
-        return np.stack([(v>>2)&1, (v>>1)&1, v&1], axis=1)
+    I = np.real(symbols)
+    Q = np.imag(symbols)
 
-    return np.hstack([demap(I), demap(Q)]).reshape(-1)
+    levels = np.array([-7, -5, -3, -1, 1, 3, 5, 7])
 
-rx_bits = qam64_demod(rx_fft.flatten())
+    # tabela odwrotna do modulatora
+    level_to_bits = {
+        -7: np.array([1,1,1]),
+        -5: np.array([1,1,0]),
+        -3: np.array([1,0,0]),
+        -1: np.array([1,0,1]),
+        1: np.array([0,0,1]),
+        3: np.array([0,0,0]),
+        5: np.array([0,1,0]),
+        7: np.array([0,1,1]),
+    }
+
+    bits = []
+    for i_val, q_val in zip(I, Q):
+        # najbliższy poziom
+        i_level = levels[np.argmin(np.abs(levels - i_val))]
+        q_level = levels[np.argmin(np.abs(levels - q_val))]
+
+        bI = level_to_bits[i_level]
+        bQ = level_to_bits[q_level]
+
+        bits.append(np.array([
+            bI[0], bQ[0],
+            bI[1], bQ[1],
+            bI[2], bQ[2]
+        ]))
+
+    return np.array(bits).reshape(-1)
+
+rx_bits = qam64_demod(symbols)
+# print(f'bits_tx:\n{bits_tx}')
+# print(f'rx_bits:\n{rx_bits}')
+# rx_bits = qam64_demod(rx_fft.flatten())
 rx_bits = rx_bits[:num_bits]
 
 # =====================
