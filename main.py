@@ -1,6 +1,5 @@
 import numpy as np
 import matplotlib.pyplot as plt
-from utils import gray_to_bin3
 
 # =====================
 # Parametry OFDM
@@ -31,33 +30,33 @@ num_symbols = len(bits_tx) // (N * mod_bits)
 def qam64_mod(bits):
     bits = bits.reshape((-1, 6))
 
-    def map3(b, Q=False):
-        # I-axis: bits 0,2,4
-        # Q-axis: bits 1,3,5
-        if not Q:
-            b0, b2, b4 = b[0], b[2], b[4]
-        else:
-            b0, b2, b4 = b[1], b[3], b[5]
+    def map_I(b):
+        return (1 - 2*b[0]) * (4 - (1 - 2*b[2]) * (2 - (1 - 2*b[4])))
+    
+    def map_Q(b):
+        return (1 - 2*b[1]) * (4 - (1 - 2*b[3]) * (2 - (1 - 2*b[5])))
 
-        return (1 - 2*b0) * (4 - (1 - 2*b2) * (2 - (1 - 2*b4)))
-
-    I = np.array([map3(b) for b in bits])
-    Q = np.array([map3(b, Q=True) for b in bits])
+    I = np.array([map_I(b) for b in bits])
+    Q = np.array([map_Q(b) for b in bits])
 
     return (I + 1j*Q) / np.sqrt(42)
 
 symbols = qam64_mod(bits_tx)
 
-# =====================
-# GRID (OFDM resource grid)
-# =====================
-grid = symbols.reshape((num_symbols, N))
+# ===================================
+# GRID (OFDM resource grid) + pilots
+# ===================================
+pilot_carriers = np.arange(0, N, 16)
+data_carriers = np.setdiff1d(np.arange(N), pilot_carriers)
 
-# piloty (opcjonalnie)
-#grid[:, ::16] = 1+1j
+data_per_ofdm = len(data_carriers)
+num_ofdm = len(symbols) // data_per_ofdm
+ofdm_data = symbols[:num_ofdm*data_per_ofdm]
 
+grid = np.zeros((num_ofdm, N), dtype=complex)
+grid[:, pilot_carriers] = 1 + 1j
+grid[:, data_carriers] = ofdm_data.reshape((-1, data_per_ofdm))
 
-grid[0, :] = 1
 # =====================
 # OFDM modulacja
 # =====================
@@ -118,7 +117,7 @@ def awgn(x, snr_db):
     noise = np.sqrt(npow/2)*(np.random.randn(*x.shape)+1j*np.random.randn(*x.shape))
     return x + noise
 
-rx = awgn(tx_serial, 0)
+rx = awgn(tx_serial, 30)
 
 # =====================
 # Receiver
@@ -129,13 +128,13 @@ rx_no_cp = rx_mat[:, CP:]
 rx_fft = np.fft.fft(rx_no_cp, axis=1) / np.sqrt(N)
 
 # usuwamy piloty
-rx_fft[:, ::16] = 0
+rx_data = rx_fft[:, data_carriers]
 
 # konstelacja
 # konstelacja wielu podnośnych (kolory)
 for k in range(4):  # np. 8 pierwszych podnośnych
-    plt.scatter(rx_fft[:, k+1].real,
-                rx_fft[:, k+1].imag,
+    plt.scatter(rx_data[:, k+1].real,
+                rx_data[:, k+1].imag,
                 label=f"podnośna {k+1}",
                 alpha=0.6)
 
@@ -184,10 +183,7 @@ def qam64_demod(symbols):
 
     return np.array(bits).reshape(-1)
 
-rx_bits = qam64_demod(symbols)
-# print(f'bits_tx:\n{bits_tx}')
-# print(f'rx_bits:\n{rx_bits}')
-# rx_bits = qam64_demod(rx_fft.flatten())
+rx_bits = qam64_demod(rx_data.flatten())
 rx_bits = rx_bits[:num_bits]
 
 # =====================
