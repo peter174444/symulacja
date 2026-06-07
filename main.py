@@ -1,21 +1,24 @@
 import numpy as np
 import matplotlib.pyplot as plt
 
+can_save = False
+can_show = False
+
 # =====================
 # Parametry OFDM
 # =====================
-N = 64              # liczba podnośnych
-CP = 16             # cyclic prefix
-mod_bits = 6        # 64-QAM
-
-fs = 1000           # sampling
-fc = 200            # nośna RF
+N        = 64          # FFT size
+delta_f  = 15e3        # 15 kHz, jak w 5G NR (FR1)
+fs       = N * delta_f # 960 kHz
+fc = 240e3             # nośna RF (środek pasma z daleka od aliasowania)
+CP       = 5           # ~7.8% symbolu, zbliżone do normal CP
+mod_bits = 6           # 64-QAM
 
 # =====================
 # Wiadomość
 # =====================
 text = "Cz ęść I Obrachunek S ł owo wst ę pne Adolfa Hitlera 9 pa ź dziernika I921 roku, w cztery lata od jej powstania, Narodowosocjalistyczna Niemiecka Partia Robotnicza zosta ł a rozwi ą zana, a jej dzia ł alno ść zakazana w ca ł ej Rzeszy. I kwietnia I924 roku wyrokiem S ą du Ludowego w Monachium zosta ł em skazany i osadzony w twierdzy Landsberg nad Lechem. To da ł o mi po latach nieprzerwanej pracy mo ż liwo ść przyst ą pienia do dzie ł a, którego wielu si ę domaga ł o, a które ja uwa ż a ł em za po ż yteczne dla ruchu. Tak wi ę c postanowi ł em wyja ś ni ć w tej ksi ąż ce cele naszego ruchu, a tak ż e przedstawi ć obraz jego rozwoju. Z niej b ę dzie si ę mo ż na wi ę cej nauczy ć ni ż z jakiejkolwiek czysto doktrynerskiej rozprawy naukowej. Da ł o mi to sposobno ść przedstawienia swojej osobowo ś ci na tyle, na ile jest to potrzebne do zrozumienia idei tej ksi ąż ki i rozwiania sfabrykowanej przez ż ydowsk ą pras ę legendy mojej osoby. T ą prac ą zwracam si ę nie do obcych, ale do tych stronników ruchu, którzy nale żą do niego sercem i pragn ą jego zrozumienia. Wiem, ż e ludzi ł atwiej mo ż na pozyska ć s ł owem mówionym ni ż pisanym i ż e ka ż dy wielki ruch na tej ziemi ro ś nie w si łę dzi ę ki mówcom, a nie wielkim pisarzom. Jednak ż e w celu stworzenia podstaw jakiej ś doktryny i jej ujednolicenia wewn ę trzne zasady musz ą zosta ć spisane. Mo ż e wi ę c ta ksi ąż ka stanie si ę kamieniem w ę gielnym naszego ruchu, do którego i ja wnios ę swój wk ł ad. Au"
-#bits_tx = np.random.randint(0, 2, 10000)
+# bits_tx = np.random.randint(0, 2, 10000)
 bits_tx = np.unpackbits(np.frombuffer(text.encode('utf-8'), dtype=np.uint8))
 
 num_bits = len(bits_tx)
@@ -46,8 +49,12 @@ symbols = qam64_mod(bits_tx)
 # ===================================
 # GRID (OFDM resource grid) + pilots
 # ===================================
-pilot_carriers = np.arange(0, N, 16)
-data_carriers = np.setdiff1d(np.arange(N), pilot_carriers)
+# 5 RB po 12 podnośnych = 60 aktywnych
+active_subcarriers = np.arange(0, 60)
+pilot_carriers = np.concatenate([
+    rb*12 + np.arange(0, 12, 2) for rb in range(5)
+])
+data_carriers = np.setdiff1d(active_subcarriers, pilot_carriers)
 
 data_per_ofdm = len(data_carriers)
 num_ofdm = len(symbols) // data_per_ofdm
@@ -88,24 +95,63 @@ def spectrum(x):
 f_bb, S_bb = spectrum(tx_serial)
 f_rf, S_rf = spectrum(rf)
 
-plt.figure(figsize=(10,5))
-plt.plot(f_bb, S_bb, label="Baseband OFDM")
-plt.plot(f_rf, S_rf, label="RF shifted")
-plt.legend()
-plt.grid()
-plt.title("OFDM Spectrum (wiele podnośnych widoczne)")
-plt.show()
+if can_save or can_show:
+    plt.figure(figsize=(10,5))
+    plt.plot(f_bb, S_bb, label="Baseband OFDM")
+    plt.plot(f_rf, S_rf, label="RF shifted")
+    plt.legend()
+    plt.grid()
+    plt.title("OFDM Spectrum (wiele podnośnych widoczne)")
+    
+    if can_save:
+        plt.savefig("plots/OFDM Spectrum.png")
+    if can_show:
+        plt.show()
+    plt.close()
+
+# =====================
+# Widmowa gęstość mocy
+# =====================
+def psd(x):
+    Nfft = 4096
+    X = np.fft.fft(x, Nfft)
+    X = np.fft.fftshift(X)
+    Pxx = (np.abs(X)**2) / (Nfft * fs)   # W/Hz (uproszczone)
+    f = np.fft.fftshift(np.fft.fftfreq(Nfft, d=1/fs))
+    return f, Pxx
+
+f, Pxx = psd(tx_serial)
+Pxx_dB = 10 * np.log10(Pxx + 1e-20)
+
+if can_save or can_show:
+    plt.plot(f, Pxx_dB)
+    plt.xlabel("Częstotliwość [Hz]")
+    plt.ylabel("PSD [dB/Hz]")
+    plt.grid()
+
+    if can_save:
+        plt.savefig("plots/PSD.png")
+    if can_show:
+        plt.show()
+    plt.close()
+
 
 # =====================
 # SPECTROGRAM (🔥 najlepsze!)
 # =====================
-plt.figure(figsize=(10,5))
-plt.specgram(tx_serial, NFFT=128, Fs=fs, noverlap=64)
-plt.title("Spectrogram OFDM (widać podnośne)")
-plt.xlabel("Czas")
-plt.ylabel("Częstotliwość")
-plt.colorbar()
-plt.show()
+if can_save or can_show:
+    plt.figure(figsize=(10,5))
+    plt.specgram(tx_serial, NFFT=128, Fs=fs, noverlap=64)
+    plt.title("Spectrogram OFDM (widać podnośne)")
+    plt.xlabel("Czas")
+    plt.ylabel("Częstotliwość")
+    plt.colorbar()
+
+    if can_save:
+        plt.savefig("plots/Spectrogram OFDM.png")
+    if can_show:
+        plt.show()
+    plt.close()
 
 # =====================
 # AWGN
@@ -117,7 +163,7 @@ def awgn(x, snr_db):
     noise = np.sqrt(npow/2)*(np.random.randn(*x.shape)+1j*np.random.randn(*x.shape))
     return x + noise
 
-rx = awgn(tx_serial, 30)
+rx = awgn(tx_serial, 20)
 
 # =====================
 # Receiver
@@ -132,16 +178,22 @@ rx_data = rx_fft[:, data_carriers]
 
 # konstelacja
 # konstelacja wielu podnośnych (kolory)
-for k in range(4):  # np. 8 pierwszych podnośnych
-    plt.scatter(rx_data[:, k+1].real,
-                rx_data[:, k+1].imag,
-                label=f"podnośna {k+1}",
-                alpha=0.6)
+if can_save or can_show:
+    for k in range(30):  # np. 8 pierwszych podnośnych
+        plt.scatter(rx_data[:, k].real,
+                    rx_data[:, k].imag,
+                    label=f"podnośna {k+1}",
+                    alpha=0.6)
 
-plt.legend()
-plt.grid()
-plt.title("Różne podnośne (kolorami)")
-plt.show()
+    plt.legend()
+    plt.grid()
+    plt.title("Różne podnośne (kolorami)")
+    
+    if can_save:
+        plt.savefig("plots/Different Subcarriers.png")
+    if can_show:
+        plt.show()
+    plt.close()
 
 # =====================
 # Demod 64-QAM
