@@ -8,7 +8,7 @@ import string
 
 # flagi sterujące zapisem i wyświetlaniem wykresów
 can_save = False
-can_show = False
+can_show = True
 eq_type = "mmse"   
 
 # =====================
@@ -63,7 +63,8 @@ grid = make_global_grid(data_symbols, num_rb=5)
 
 # 3) wizualizacja
 # visualize_rb(rb)
-visualize_grid(grid)
+if can_show:
+    visualize_grid(grid)
 
 # =====================
 # OFDM modulacja (baseband)
@@ -104,7 +105,7 @@ rf = awgn_real(rf, snr_db)
 # Widmo (FFT)
 # =====================
 def spectrum(x, fs):
-    Nfft = 2048
+    Nfft = 4096 if fs > 1e6 else 1024
     S = np.fft.fftshift(np.fft.fft(x, Nfft))
     f = np.fft.fftshift(np.fft.fftfreq(Nfft, d=1/fs))
     return f, np.abs(S)
@@ -113,25 +114,41 @@ def spectrum(x, fs):
 f_bb, S_bb = spectrum(tx_serial, fs_bb)
 f_rf, S_rf = spectrum(rf, fs_rf)
 
+# Widmo Baseband
 if can_save or can_show:
     plt.figure(figsize=(10,5))
-    plt.plot(f_bb, S_bb, label="Baseband OFDM")
-    plt.plot(f_rf, S_rf, label="RF signal")
-    plt.legend()
+    plt.plot(f_bb, S_bb)
+    plt.title("Spectrum (Baseband)")
+    plt.xlabel("Częstotliwość [Hz]")
+    plt.ylabel("Amplituda")
     plt.grid()
-    plt.title("OFDM Spectrum (BB & RF)")
     if can_save:
-        plt.savefig("plots/OFDM_Spectrum.png")
+        plt.savefig("plots/Spectrum_BB.png")
     if can_show:
         plt.show()
     plt.close()
+
+# Widmo RF
+if can_save or can_show:
+    plt.figure(figsize=(10,5))
+    plt.plot(f_rf, S_rf)
+    plt.title("Spectrum (RF)")
+    plt.xlabel("Częstotliwość [Hz]")
+    plt.ylabel("Amplituda")
+    plt.grid()
+    if can_save:
+        plt.savefig("plots/Spectrum_RF.png")
+    if can_show:
+        plt.show()
+    plt.close()
+
 
 
 # =====================
 # PSD (Baseband)
 # =====================
 def psd(x, fs):
-    Nfft = 4096
+    Nfft = 8192 if fs > 1e6 else 4096
     X = np.fft.fftshift(np.fft.fft(x, Nfft))
     Pxx = (np.abs(X)**2) / (Nfft * fs)
     f = np.fft.fftshift(np.fft.fftfreq(Nfft, d=1/fs))
