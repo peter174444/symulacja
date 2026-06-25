@@ -3,10 +3,13 @@ from dmrs import make_rb, make_global_grid, visualize_grid, visualize_rb
 import numpy as np
 from scipy.signal import resample
 from matplotlib import pyplot as plt
+import random                           
+import string                           
 
 # flagi sterujące zapisem i wyświetlaniem wykresów
 can_save = False
 can_show = False
+eq_type = "mmse"   
 
 # =====================
 # Parametry OFDM / BB
@@ -17,7 +20,6 @@ delta_f       = 15e3                 # 15 kHz
 fs_bb         = num_qam_syms * delta_f   # 900 kHz (baseband sampling)
 CP            = 5
 mod_bits      = 6                    # 64-QAM
-EQ_MODE       = 2
 
 # =====================
 # Parametry RF
@@ -32,6 +34,7 @@ snr_db = 40
 # Wiadomość → bity
 # =====================
 text = get_text()
+# text = "".join(random.choices(string.printable, k=1000))
 bits_tx = np.unpackbits(np.frombuffer(text.encode('utf-8'), dtype=np.uint8))
 num_bits_orig = len(bits_tx)
 
@@ -53,13 +56,13 @@ symbols = qam64_mod(bits_tx_use)        # dokładnie 720 symboli QAM
 data_symbols = symbols                  # wszystkie są danymi
 
 # 1) pojedynczy RB (pilotowe symbole 2 i 11)
-rb = make_rb(data_symbols[:12*12], pilot_symbols=[2, 11])
+# rb = make_rb(data_symbols[:12*12], pilot_symbols=[2, 11])
 
 # 2) globalna siatka 5 RB
 grid = make_global_grid(data_symbols, num_rb=5)
 
 # 3) wizualizacja
-visualize_rb(rb)
+# visualize_rb(rb)
 visualize_grid(grid)
 
 # =====================
@@ -245,12 +248,21 @@ sc_all = np.arange(60)
 H_full = np.interp(sc_all, sc_pilot, H_pilot)
 
 # ===========================
-# Equalizacja MMSE
+# Equalizacja ZF / MMSE
 # ===========================
-snr_lin = 10**(snr_db / 10)
-sigma2 = 1 / snr_lin
 
-Y_eq = Y_rx * np.conj(H_full) / (np.abs(H_full)**2 + sigma2)
+if eq_type == "zf":
+    # Zero-Forcing: X = Y / H
+    Y_eq = Y_rx * np.conj(H_full) / (np.abs(H_full)**2 + 1e-12)
+
+elif eq_type == "mmse":
+    # MMSE: X = Y * H* / (|H|^2 + sigma^2)
+    snr_lin = 10**(snr_db / 10)
+    sigma2 = 1 / snr_lin
+    Y_eq = Y_rx * np.conj(H_full) / (np.abs(H_full)**2 + sigma2)
+
+else:
+    raise ValueError("eq_type must be 'zf' or 'mmse'")
 
 # =====================
 # Mask RE danych (bez pilotów)
@@ -262,6 +274,18 @@ for s in pilot_symbols:
 
 # RX: bierzemy tylko RE-dane
 rx_data = Y_eq[mask].reshape(-1)
+
+# =====================
+# Mask RE danych (bez pilotów)
+# =====================
+pilot_symbols = [2, 11]
+mask = np.ones_like(grid, dtype=bool)
+for s in pilot_symbols:
+    mask[s, :] = False   # cały symbol pilotowy = brak danych
+
+# RX: bierzemy tylko RE-dane
+rx_data = Y_eq[mask].reshape(-1)
+
 
 # =====================
 # Konstelacje (tylko RE danych, bez DMRS)
