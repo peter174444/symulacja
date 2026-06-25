@@ -1,5 +1,5 @@
 from ofdm3 import qam64_mod, qam64_demod, get_text, awgn_real, bb_to_rf, rf_to_bb, antenna_nonlinearity
-from dmrs import make_rb, make_global_grid, visualize_grid, visualize_rb
+from dmrs import make_global_grid, visualize_grid
 import numpy as np
 from scipy.signal import resample
 from matplotlib import pyplot as plt
@@ -83,7 +83,7 @@ tx_serial = antenna_nonlinearity(tx_serial, a3=0.01)
 # =====================
 # Kanał wielodrogowy (3-tap)
 # =====================
-h = np.array([0.9+0j, 0.4-0.3j, 0.2+0.1j])
+h = np.array([0.9+0j, 0.4-0.3j, 0.2+0.1j, 0, 0])
 h = h / np.linalg.norm(h)
 
 tx_serial = np.convolve(tx_serial, h)[:len(tx_serial)]
@@ -233,36 +233,57 @@ pilot_symbols = [2, 11]
 pilot_val = 1.0 + 1j
 
 # estymacja na podnośnych pilotowych (co 2)
-H_dmrs_2 = Y_rx[2, ::2] / pilot_val
+H_dmrs_2  = Y_rx[2,  ::2] / pilot_val
 H_dmrs_11 = Y_rx[11, ::2] / pilot_val
 
-# uśrednienie DMRS w czasie
-H_pilot = 0.5 * (H_dmrs_2 + H_dmrs_11)
-
 # ===========================
-# Interpolacja kanału na wszystkie 60 podnośnych
+# Interpolacja 2D: czas + częstotliwość
 # ===========================
-sc_pilot = np.arange(0, 60, 2)      # 0,2,4,...,58
-sc_all = np.arange(60)
 
-H_full = np.interp(sc_all, sc_pilot, H_pilot)
+num_symbols = Y_rx.shape[0]   # 14
+num_subcarriers = Y_rx.shape[1]  # 60
+
+H_est = np.zeros((num_symbols, num_subcarriers), dtype=complex)
+
+# 1) Interpolacja po czasie (dla każdej podnośnej pilotowej)
+for i, sc in enumerate(range(0, num_subcarriers, 2)):
+    H_est[:, sc] = np.interp(
+        np.arange(num_symbols),      # 0..13
+        pilot_symbols,               # [2, 11]
+        [H_dmrs_2[i], H_dmrs_11[i]]  # wartości na DMRS
+    )
+
+# 2) Interpolacja po częstotliwości (dla każdego symbolu)
+pilot_sc = np.arange(0, num_subcarriers, 2)
+
+for s in range(num_symbols):
+    H_real = np.interp(
+        np.arange(num_subcarriers),
+        pilot_sc,
+        H_est[s, pilot_sc].real
+    )
+    H_imag = np.interp(
+        np.arange(num_subcarriers),
+        pilot_sc,
+        H_est[s, pilot_sc].imag
+    )
+    H_est[s, :] = H_real + 1j * H_imag
 
 # ===========================
 # Equalizacja ZF / MMSE
 # ===========================
 
 if eq_type == "zf":
-    # Zero-Forcing: X = Y / H
-    Y_eq = Y_rx * np.conj(H_full) / (np.abs(H_full)**2 + 1e-12)
+    Y_eq = Y_rx * np.conj(H_est) / (np.abs(H_est)**2 + 1e-12)
 
 elif eq_type == "mmse":
-    # MMSE: X = Y * H* / (|H|^2 + sigma^2)
     snr_lin = 10**(snr_db / 10)
     sigma2 = 1 / snr_lin
-    Y_eq = Y_rx * np.conj(H_full) / (np.abs(H_full)**2 + sigma2)
+    Y_eq = Y_rx * np.conj(H_est) / (np.abs(H_est)**2 + sigma2)
 
 else:
     raise ValueError("eq_type must be 'zf' or 'mmse'")
+
 
 # =====================
 # Mask RE danych (bez pilotów)
