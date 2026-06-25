@@ -8,16 +8,16 @@ import string
 
 # flagi sterujące zapisem i wyświetlaniem wykresów
 can_save = False
-can_show = True
+can_show = False
 eq_type = "mmse"   
 
 # =====================
 # Parametry OFDM / BB
 # =====================
-num_qam_syms  = 60
+num_active_subcarriers  = 60
 data_per_ofdm = 60
 delta_f       = 15e3                 # 15 kHz
-fs_bb         = num_qam_syms * delta_f   # 900 kHz (baseband sampling)
+fs_bb         = num_active_subcarriers * delta_f   # 900 kHz (baseband sampling)
 CP            = 5
 mod_bits      = 6                    # 64-QAM
 
@@ -41,7 +41,6 @@ num_bits_orig = len(bits_tx)
 # =====================
 # GRID (5 RB, DMRS w czasie jak w 5G NR)
 # =====================
-
 num_rb = 5
 num_data_symbols = num_rb * 12 * 12      # 5 RB × 12 subcarriers × 12 data symbols
 num_data_bits = num_data_symbols * mod_bits
@@ -53,6 +52,7 @@ else:
     bits_tx_use = np.hstack([bits_tx, np.zeros(num_data_bits - len(bits_tx), dtype=np.int8)])
 
 symbols = qam64_mod(bits_tx_use)        # dokładnie 720 symboli QAM
+
 data_symbols = symbols                  # wszystkie są danymi
 
 # 1) pojedynczy RB (pilotowe symbole 2 i 11)
@@ -63,13 +63,14 @@ grid = make_global_grid(data_symbols, num_rb=5)
 
 # 3) wizualizacja
 # visualize_rb(rb)
+
 if can_show:
     visualize_grid(grid)
 
 # =====================
 # OFDM modulacja (baseband)
 # =====================
-ofdm_time = np.fft.ifft(grid, axis=1) * np.sqrt(num_qam_syms)
+ofdm_time = np.fft.ifft(grid, axis=1) * np.sqrt(num_active_subcarriers)
 
 # dodanie prefixu cyklicznego
 cp = ofdm_time[:, -CP:]
@@ -241,7 +242,7 @@ num_ofdm_rx = len(rx_serial) // samples_per_ofdm
 
 rx_mat = rx_serial[:num_ofdm_rx * samples_per_ofdm].reshape(num_ofdm_rx, samples_per_ofdm)
 rx_no_cp = rx_mat[:, CP:]
-Y_rx = np.fft.fft(rx_no_cp, axis=1) / np.sqrt(num_qam_syms)
+Y_rx = np.fft.fft(rx_no_cp, axis=1) / np.sqrt(num_active_subcarriers)
 
 # ===========================
 # Estymacja kanału z DMRS (symbol 2 i 11)
@@ -330,8 +331,8 @@ rx_data = Y_eq[mask].reshape(-1)
 # =====================
 
 pilot_symbols = [2, 11]
-pilot_subcarriers = np.arange(0, num_qam_syms, 2)   # 0,2,4,...,58
-data_subcarriers = np.setdiff1d(np.arange(num_qam_syms), pilot_subcarriers)
+pilot_subcarriers = np.arange(0, num_active_subcarriers, 2)   # 0,2,4,...,58
+data_subcarriers = np.setdiff1d(np.arange(num_active_subcarriers), pilot_subcarriers)
 
 if can_save or can_show:
     plt.figure(figsize=(10, 6))
@@ -365,8 +366,6 @@ if can_save or can_show:
         plt.show()
 
     plt.close()
-
-
 
 # =====================
 # Demod 64-QAM
